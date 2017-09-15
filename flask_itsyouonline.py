@@ -6,6 +6,8 @@ from flask import Flask, send_from_directory, render_template, request, jsonify,
 __version__ = '0.0.1'
 
 # jwt flow is copied from codescalers dashboard project.
+
+ITSYOUONLINEV1 = "https://itsyou.online/v1"
 def make_oauth_route(**kwargs):
     def make_oauth():
         id = request.args.get('id')
@@ -20,7 +22,7 @@ def make_oauth_route(**kwargs):
                 "scope": SCOPE,
                 "state" : STATE
             }
-            base_url = "https://itsyou.online/v1/oauth/authorize?"
+            base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
             url = base_url + urlencode(params)
             return url
         login_url = login_to_idserver()
@@ -33,7 +35,7 @@ def make_callback_route(**kwargs):
         state = request.args.get("state")
         if code :
             #get the access token
-            def get_access_token():
+            def get_access_token_and_username():
                 params = {
                 "code" : code,
                 "state":state,
@@ -42,7 +44,7 @@ def make_callback_route(**kwargs):
                 "client_id" : kwargs['CLIENT_ID'],
                 "client_secret": kwargs['CLIENT_SECRET']
                 }
-                base_url = "https://itsyou.online/v1/oauth/access_token?"
+                base_url = "{}/oauth/access_token?".format(ITSYOUONLINEV1)
                 url = base_url + urlencode(params)
                 response = requests.post(url)
                 response.raise_for_status()
@@ -50,20 +52,33 @@ def make_callback_route(**kwargs):
                 print(response)
                 if ("user:memberof:"+kwargs['ORGANIZATION']) in response['scope'].split(','):
                     access_token = response['access_token']
-                    return access_token
+                    print(response)
+                    username = response['info']['username']
+                    scope = response['scope']
+                    return access_token, username
                 else:
-                    return None
+                    return None, None
+
             def get_jwt(access_token):
-                base_url = "https://itsyou.online/v1/oauth/jwt"
+                base_url = "{}/oauth/jwt".format(ITSYOUONLINEV1)
                 headers = {'Authorization': 'token %s' % access_token}
                 data = {'scope': 'user:memberOf:%s' % kwargs['CLIENT_ID']}
                 response = requests.post(base_url, json=data, headers=headers, verify=False)
                 return response.content.decode()
-            access_token = get_access_token()
+            access_token, username = get_access_token_and_username()
             print(access_token)
             if access_token:
                 jwt = get_jwt(access_token)
-            print(jwt)
+                endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
+                headers = {'Authorization': 'bearer {}'.format(jwt)}
+                userinfourl = "https://itsyou.online/api/users/{}".format(username)
+                response = requests.get(userinfourl, headers=headers) 
+                response.raise_for_status()
+                info = response.json()
+                print(info)
+                if endpoint is not None:
+                    requests.post(endpoint, data=info, headers=headers)
+
             return jwt
         return False
     return get_code
@@ -86,7 +101,8 @@ class ItsyouonlineProvider(object):
         self.redirect_uri = app.config['REDIRECT_URI']
         self.organization = app.config['ORGANIZATION']
         self.authendpoint = app.config['AUTH_ENDPOINT']
-        self.callbackendpoint = app.config['CALLBACKENDPOINT']
+        self.callbackendpoint = app.config['CALLBACK_ENDPOINT']
+        self.oncompleteendpoint = app.config.get('ON_COMPLETE_ENDPOINT', '')
 
         oauth_route_function = make_oauth_route(**app.config)
         # import ipdb; ipdb.set_trace()
