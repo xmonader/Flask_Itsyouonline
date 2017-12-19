@@ -33,6 +33,7 @@ def make_oauth_route(**kwargs):
             }
             base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
             url = base_url + urlencode(params)
+            print("url: ", url)
             return url
         login_url = login_to_idserver()
         return redirect(login_url)
@@ -53,9 +54,8 @@ def make_callback_route(**kwargs):
                     "client_id" : kwargs['CLIENT_ID'],
                     "client_secret": kwargs['CLIENT_SECRET']
                 }
-                base_url = "{}/oauth/access_token?".format(ITSYOUONLINEV1)
-                url = base_url + urlencode(params)
-                response = requests.post(url)
+                url = "{}/oauth/access_token".format(ITSYOUONLINEV1)
+                response = requests.post(url, params=params)
                 response.raise_for_status()
                 response = response.json()
                 if ("user:memberof:"+kwargs['ORGANIZATION']) in response['scope'].split(','):
