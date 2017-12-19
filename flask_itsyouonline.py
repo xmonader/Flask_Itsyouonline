@@ -2,7 +2,9 @@ import uuid, requests
 from urllib.parse import urlparse, parse_qs, urlencode
 from urllib.request import urlopen
 import flask
-from flask import Flask, send_from_directory, render_template, request, jsonify, redirect,url_for
+import time
+from flask import Flask, send_from_directory, render_template, request, jsonify, redirect, url_for, session
+
 __version__ = '0.0.1'
 
 # jwt flow is copied from codescalers dashboard project.
@@ -10,11 +12,18 @@ __version__ = '0.0.1'
 ITSYOUONLINEV1 = "https://itsyou.online/v1"
 def make_oauth_route(**kwargs):
     def make_oauth():
+        if 'iyo_user_info' in session:
+            endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
+            if endpoint is not None:
+                return redirect(endpoint)
+        
         id = request.args.get('id')
         def login_to_idserver():
             from uuid import uuid4
             STATE = str(uuid4())
             SCOPE = "user:memberof:"+kwargs['ORGANIZATION']
+            if "SCOPE" in kwargs:
+                SCOPE += "," + kwargs['SCOPE']
             params = {
                 "response_type": "code",
                 "client_id":kwargs['CLIENT_ID'],
@@ -37,19 +46,18 @@ def make_callback_route(**kwargs):
             #get the access token
             def get_access_token_and_username():
                 params = {
-                "code" : code,
-                "state":state,
-                "redirect_uri": kwargs['REDIRECT_URI'],
-                # "grant_type": "authorization_code",
-                "client_id" : kwargs['CLIENT_ID'],
-                "client_secret": kwargs['CLIENT_SECRET']
+                    "code" : code,
+                    "state": state,
+                    "redirect_uri": kwargs['REDIRECT_URI'],
+                    "grant_type": "authorization_code",
+                    "client_id" : kwargs['CLIENT_ID'],
+                    "client_secret": kwargs['CLIENT_SECRET']
                 }
                 base_url = "{}/oauth/access_token?".format(ITSYOUONLINEV1)
                 url = base_url + urlencode(params)
                 response = requests.post(url)
                 response.raise_for_status()
                 response = response.json()
-                print(response)
                 if ("user:memberof:"+kwargs['ORGANIZATION']) in response['scope'].split(','):
                     access_token = response['access_token']
                     print(response)
@@ -66,25 +74,35 @@ def make_callback_route(**kwargs):
                 response = requests.post(base_url, json=data, headers=headers, verify=False)
                 return response.content.decode()
             access_token, username = get_access_token_and_username()
-            print(access_token)
             if access_token:
                 jwt = get_jwt(access_token)
-                endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
                 headers = {'Authorization': 'bearer {}'.format(jwt)}
-                userinfourl = "https://itsyou.online/api/users/{}".format(username)
+                userinfourl = "https://itsyou.online/api/users/{}/info".format(username)
                 response = requests.get(userinfourl, headers=headers) 
                 response.raise_for_status()
-                info = response.json()
-                print(info)
+                session['_iyo_authenticated'] = time.time()
+                session['iyo_user_info'] = response.json()
+                session['iyo_jwt'] = jwt
+                endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
                 if endpoint is not None:
-                    requests.post(endpoint, data=info, headers=headers)
-
-            return jwt
+                    return redirect(endpoint)
         return False
     return get_code
 
 
+def invalidate_session():
+    authenticated = session.get('_iyo_authenticated')
+    if not authenticated or authenticated + 300 < time.time():
+        if '_iyo_authenticated' in session:
+            del session['_iyo_authenticated']
+        if 'iyo_user_info' in session:
+            del session['iyo_user_info']
+        if 'iyo_jwt' in session:
+            del session['iyo_jwt']
+
+
 class ItsyouonlineProvider(object):
+
     def __init__(self, app=None, **defaults):
 
         if app:
@@ -109,5 +127,7 @@ class ItsyouonlineProvider(object):
         app.route(self.authendpoint)(oauth_route_function)
         callback_route_function = make_callback_route(**app.config)
         app.route(self.callbackendpoint)(callback_route_function)
+
+        app.before_request(invalidate_session)
 
         return app
