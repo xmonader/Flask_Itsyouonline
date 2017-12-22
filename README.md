@@ -13,28 +13,20 @@ Flask-Itsyouonline is a plugin for Flask microframework implements the OAuth flo
 
 ## Example application
 
-```
+```python
 import flask
 from flask import Flask, 
-from flask_itsyouonline import ItsyouonlineProvider
+from flask_itsyouonline import configure, authenticated
 
-config = {
-    'CLIENT_ID': 'flaskorg',
-    'CLIENT_SECRET': 'CLIENTSECRET GOES HERE',
-    'REDIRECT_URI' : 'https://37127c9e.ngrok.io/callback',
-    'ORGANIZATION' : 'flaskorg',
-    'AUTH_ENDPOINT': '/authorize',
-    'CALLBACK_ENDPOINT': '/callback',
-    'ON_COMPLETE_ENDPOINT': '/on_complete',
-}
 app = flask.Flask(__name__)
-app.config.update(config)
-itsapp = ItsyouonlineProvider()
-itsapp.init_app(app)
 
-@app.route("/on_complete", methods=["POST"])
-def on_complete():
-    print(request.form)
+configure(app, 'Itsyou.Online organization', 'Itsyou.Online client secret', 
+          "http://127.0.0.1/callback", '/callback', 'user:publickey:ssh')
+
+@app.route("/", methods=["GET"])
+@authenticated
+def home():
+    return "Hello %s" % app.config['iyo_user_info']['username']
 
 if __name__ == "__main__":
 

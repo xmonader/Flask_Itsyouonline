@@ -1,98 +1,30 @@
-import uuid, requests
-from urllib.parse import urlparse, parse_qs, urlencode
-from urllib.request import urlopen
-import flask
+#
+# Itsyou.Online authentication helpers for Flask
+#
+import re
 import time
-from flask import Flask, send_from_directory, render_template, request, jsonify, redirect, url_for, session
+import uuid
+from functools import wraps
+from urllib.parse import urlencode
+
+import jwt
+import requests
+from flask import current_app, redirect, request, session
 
 __version__ = '0.0.1'
 
-# jwt flow is copied from codescalers dashboard project.
-
 ITSYOUONLINEV1 = "https://itsyou.online/v1"
-def make_oauth_route(**kwargs):
-    def make_oauth():
-        if 'iyo_user_info' in session:
-            endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
-            if endpoint is not None:
-                return redirect(endpoint)
-        
-        id = request.args.get('id')
-        def login_to_idserver():
-            from uuid import uuid4
-            STATE = str(uuid4())
-            SCOPE = "user:memberof:"+kwargs['ORGANIZATION']
-            if "SCOPE" in kwargs:
-                SCOPE += "," + kwargs['SCOPE']
-            params = {
-                "response_type": "code",
-                "client_id":kwargs['CLIENT_ID'],
-                "redirect_uri":kwargs['REDIRECT_URI'],
-                "scope": SCOPE,
-                "state" : STATE
-            }
-            base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
-            url = base_url + urlencode(params)
-            print("url: ", url)
-            return url
-        login_url = login_to_idserver()
-        return redirect(login_url)
-    return make_oauth
-
-def make_callback_route(**kwargs):
-    def get_code():
-        code = request.args.get("code")
-        state = request.args.get("state")
-        if code :
-            #get the access token
-            def get_access_token_and_username():
-                params = {
-                    "code" : code,
-                    "state": state,
-                    "redirect_uri": kwargs['REDIRECT_URI'],
-                    "grant_type": "authorization_code",
-                    "client_id" : kwargs['CLIENT_ID'],
-                    "client_secret": kwargs['CLIENT_SECRET']
-                }
-                url = "{}/oauth/access_token".format(ITSYOUONLINEV1)
-                response = requests.post(url, params=params)
-                response.raise_for_status()
-                response = response.json()
-                if ("user:memberof:"+kwargs['ORGANIZATION']) in response['scope'].split(','):
-                    access_token = response['access_token']
-                    print(response)
-                    username = response['info']['username']
-                    scope = response['scope']
-                    return access_token, username
-                else:
-                    return None, None
-
-            def get_jwt(access_token):
-                base_url = "{}/oauth/jwt".format(ITSYOUONLINEV1)
-                headers = {'Authorization': 'token %s' % access_token}
-                data = {'scope': 'user:memberOf:%s' % kwargs['CLIENT_ID']}
-                response = requests.post(base_url, json=data, headers=headers, verify=False)
-                return response.content.decode()
-            access_token, username = get_access_token_and_username()
-            if access_token:
-                jwt = get_jwt(access_token)
-                headers = {'Authorization': 'bearer {}'.format(jwt)}
-                userinfourl = "https://itsyou.online/api/users/{}/info".format(username)
-                response = requests.get(userinfourl, headers=headers) 
-                response.raise_for_status()
-                session['_iyo_authenticated'] = time.time()
-                session['iyo_user_info'] = response.json()
-                session['iyo_jwt'] = jwt
-                endpoint = kwargs.get('ON_COMPLETE_ENDPOINT', None)
-                if endpoint is not None:
-                    return redirect(endpoint)
-        return False
-    return get_code
+JWT_AUTH_HEADER = re.compile("^bearer (.*)$", re.IGNORECASE)
+ITSYOUONLINE_KEY = """-----BEGIN PUBLIC KEY-----
+MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
+7MjiGYvqalizeSWTHEpnd7oea9IQ8T5oJjMVH5cc0H5tFSKilFFeh//wngxIyny6
+6+Vq5t5B0V0Ehy01+2ceEon2Y0XDkIKv
+-----END PUBLIC KEY-----"""
 
 
-def invalidate_session():
-    authenticated = session.get('_iyo_authenticated')
-    if not authenticated or authenticated + 300 < time.time():
+def _invalidate_session():
+    authenticated_ = session.get('_iyo_authenticated')
+    if not authenticated_ or authenticated_ + 300 < time.time():
         if '_iyo_authenticated' in session:
             del session['_iyo_authenticated']
         if 'iyo_user_info' in session:
@@ -101,33 +33,111 @@ def invalidate_session():
             del session['iyo_jwt']
 
 
-class ItsyouonlineProvider(object):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None):
+    """
+    @param app: Flask app object
+    @param organization: Fully qualified Itsyou.Online organization.
+                         E.g. root_org.sub_org.sub_sub_org
+    @param client_secret: Itsyou.Online organization api key client_secret
+    @param callback_uri: Uri Itsyou.Online will target in the oauth flow.
+                         Must be the same as the one configured in the Itsyou.Online
+                         api key of the corresponding client_secret parameter.
+    @param callback_route: Route to bind the callback handler to.
+    @param scope: Extra scope to request from Itsyou.Online
+    """
+    app.before_request(_invalidate_session)
+    app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
+                                    callback_uri=callback_uri, callback_route=callback_route,
+                                    scope=scope)
+    app.add_url_rule(callback_route, '_callback', _callback)
 
-    def __init__(self, app=None, **defaults):
 
-        if app:
-            self.init_app(app)
+def authenticated(handler):
+    """
+    Wraps route handler to be only accessible after authentication via Itsyou.Online
+    """
+    @wraps(handler)
+    def _wrapper(*args, **kwargs):
+        if not session.get("_iyo_authenticated"):
+            config = current_app.config["iyo_config"]
+            scope = "user:memberof:%s" % config["organization"]
+            if config["scope"]:
+                scope = "%s,%s" % (scope, config["scope"])
+            header = request.headers.get("Authorization")
+            if header:
+                match = JWT_AUTH_HEADER.match(header)
+                if match:
+                    jwt_string = match.group(1)
+                    jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                    jwt_scope = jwt_info["scope"]
+                    if set(scope.split(",")).issubset(set(jwt_scope)):
+                        username = jwt_info["username"]
+                        session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
+                        session["_iyo_authenticated"] = time.time()
+                        return handler(*args, **kwargs)
+                return "Could not authorize this request!", 403
+            state = str(uuid.uuid4())
+            session["_iyo_state"] = state
+            session["_iyo_auth_complete_uri"] = request.path
+            params = {
+                "response_type": "code",
+                "client_id": config["organization"],
+                "redirect_uri": config["callback_uri"],
+                "scope": scope,
+                "state" : state
+            }
+            base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
+            login_url = base_url + urlencode(params)
+            return redirect(login_url)
+        else:
+            return handler(*args, **kwargs)
+    return _wrapper
 
-    def init_app(self, app):
-        """
-        Install authorize and callback routes on the application.
 
-        :param app: a :class:`flask.Flask` instance.
-        """
-        self.client_id = app.config['CLIENT_ID']
-        self.client_secret = app.config['CLIENT_SECRET']
-        self.redirect_uri = app.config['REDIRECT_URI']
-        self.organization = app.config['ORGANIZATION']
-        self.authendpoint = app.config['AUTH_ENDPOINT']
-        self.callbackendpoint = app.config['CALLBACK_ENDPOINT']
-        self.oncompleteendpoint = app.config.get('ON_COMPLETE_ENDPOINT', '')
+def _callback():
+    code = request.args.get("code")
+    state = request.args.get("state")
+    session_state = session.get("_iyo_state")
+    on_complete_uri = session.get("_iyo_auth_complete_uri")
+    if not on_complete_uri:
+        return "Invalid request.", 400
+    if session_state != state:
+        return "Invalid state received. Cannot authenticate request!", 400
+    if not code:
+        return "Invalid code received. Cannot authenticate request!", 400
+    # Get access token
+    config = current_app.config["iyo_config"]
+    organization = config["organization"]
+    params = {
+        "code" : code,
+        "state": state,
+        "grant_type": "authorization_code",
+        "client_id" : organization,
+        "client_secret": config["client_secret"],
+        "redirect_uri": config["callback_uri"],
+    }
+    base_url = "{}/oauth/access_token?".format(ITSYOUONLINEV1)
+    url = base_url + urlencode(params)
+    response = requests.post(url)
+    response.raise_for_status()
+    response = response.json()
+    scope_parts = response["scope"].split(",")
+    if not "user:memberof:%s" % organization in scope_parts:
+        return "User is not authorized.", 403
+    access_token = response["access_token"]
+    username = response["info"]["username"]
+    # Get user info
+    session['iyo_user_info'] = _get_info(username, access_token=access_token)
+    session['_iyo_authenticated'] = time.time()
+    return redirect(on_complete_uri)
 
-        oauth_route_function = make_oauth_route(**app.config)
-        # import ipdb; ipdb.set_trace()
-        app.route(self.authendpoint)(oauth_route_function)
-        callback_route_function = make_callback_route(**app.config)
-        app.route(self.callbackendpoint)(callback_route_function)
 
-        app.before_request(invalidate_session)
-
-        return app
+def _get_info(username, access_token=None, jwt=None):
+    if access_token:
+        headers = {"Authorization": "token %s" % access_token}
+    else:
+        headers = {"Authorization": "Bearer %s" % jwt}
+    userinfourl = "https://itsyou.online/api/users/%s/info" % username
+    response = requests.get(userinfourl, headers=headers)
+    response.raise_for_status()
+    return response.json()
