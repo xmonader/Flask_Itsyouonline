@@ -33,7 +33,7 @@ def _invalidate_session():
             del session['iyo_jwt']
 
 
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -44,11 +44,12 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
                          api key of the corresponding client_secret parameter.
     @param callback_route: Route to bind the callback handler to.
     @param scope: Extra scope to request from Itsyou.Online
+    @param get_jwt: Set to True to also create a jwt for the authenticated user
     """
     app.before_request(_invalidate_session)
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
-                                    scope=scope)
+                                    scope=scope, get_jwt=get_jwt, offline_access=offline_access)
     app.add_url_rule(callback_route, '_callback', _callback)
 
 
@@ -74,6 +75,7 @@ def authenticated(handler):
                         username = jwt_info["username"]
                         session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
                         session["_iyo_authenticated"] = time.time()
+                        session['iyo_jwt'] = jwt_string
                         return handler(*args, **kwargs)
                 return "Could not authorize this request!", 403
             state = str(uuid.uuid4())
@@ -129,6 +131,17 @@ def _callback():
     # Get user info
     session['iyo_user_info'] = _get_info(username, access_token=access_token)
     session['_iyo_authenticated'] = time.time()
+    if config['get_jwt']:
+        # Create JWT
+        scope = "user:memberof:%s" % organization
+        if config['offline_access']:
+            scope += ",offline_access"
+        params = dict(scope=scope)
+        jwturl = "https://itsyou.online/v1/oauth/jwt?%s" % urlencode(params)
+        headers = {"Authorization": "token %s" % access_token}
+        response = requests.get(jwturl, headers=headers)
+        response.raise_for_status()
+        session['iyo_jwt'] = response.text
     return redirect(on_complete_uri)
 
 
