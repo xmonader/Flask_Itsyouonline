@@ -2,6 +2,9 @@
 
 Flask-Itsyouonline is a plugin for Flask microframework implements the OAuth flow of itsyou.online 
 
+## Installation
+`pip3 install flask_itsyouonline`
+
 ## Configurations
 
 - CLIENT_ID: itsyou.online client id.
