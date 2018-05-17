@@ -33,7 +33,7 @@ def _invalidate_session():
             del session['iyo_jwt']
 
 
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -49,9 +49,17 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     app.before_request(_invalidate_session)
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
-                                    scope=scope, get_jwt=get_jwt, offline_access=offline_access)
+                                    scope=scope, get_jwt=get_jwt, offline_access=offline_access,
+                                    orgfromrequest=orgfromrequest)
     app.add_url_rule(callback_route, '_callback', _callback)
 
+
+def get_auth_org():
+    config = current_app.config["iyo_config"]
+    if config['orgfromrequest']:
+        return request.values[config['orgfromrequest']]
+    else:
+        return config['organization']
 
 def authenticated(handler):
     """
@@ -60,10 +68,14 @@ def authenticated(handler):
     @wraps(handler)
     def _wrapper(*args, **kwargs):
         if not session.get("_iyo_authenticated"):
+            organization = get_auth_org()
             config = current_app.config["iyo_config"]
-            scope = "user:memberof:%s" % config["organization"]
+            scopes = []
+            scopes.append("user:memberof:{}".format(organization))
             if config["scope"]:
-                scope = "%s,%s" % (scope, config["scope"])
+                scopes.append(config['scope'])
+            scope = ','.join(scopes)
+
             header = request.headers.get("Authorization")
             if header:
                 match = JWT_AUTH_HEADER.match(header)
@@ -80,7 +92,8 @@ def authenticated(handler):
                 return "Could not authorize this request!", 403
             state = str(uuid.uuid4())
             session["_iyo_state"] = state
-            session["_iyo_auth_complete_uri"] = request.path
+            session['_iyo_organization'] = organization
+            session["_iyo_auth_complete_uri"] = request.full_path
             params = {
                 "response_type": "code",
                 "client_id": config["organization"],
@@ -110,6 +123,7 @@ def _callback():
     # Get access token
     config = current_app.config["iyo_config"]
     organization = config["organization"]
+    authorg = session['_iyo_organization']
     params = {
         "code" : code,
         "state": state,
@@ -124,7 +138,7 @@ def _callback():
     response.raise_for_status()
     response = response.json()
     scope_parts = response["scope"].split(",")
-    if not "user:memberof:%s" % organization in scope_parts:
+    if not "user:memberof:{}".format(authorg) in scope_parts:
         return "User is not authorized.", 403
     access_token = response["access_token"]
     username = response["info"]["username"]
@@ -133,7 +147,7 @@ def _callback():
     session['_iyo_authenticated'] = time.time()
     if config['get_jwt']:
         # Create JWT
-        scope = "user:memberof:%s" % organization
+        scope = "user:memberof:{}".format(authorg)
         if config['offline_access']:
             scope += ",offline_access"
         params = dict(scope=scope)
