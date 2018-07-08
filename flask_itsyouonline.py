@@ -168,3 +168,66 @@ def _get_info(username, access_token=None, jwt=None):
     response = requests.get(userinfourl, headers=headers)
     response.raise_for_status()
     return response.json()
+
+
+
+
+def get_auth_org2(org_from_request=False):
+    config = current_app.config["iyo_config"]
+    if org_from_request is True:
+        return request.values[config['orgfromrequest']]
+
+    return config['organization']
+
+
+def requires_auth(org_from_request=False):
+    def decorator(handler):
+        """
+        Wraps route handler to be only accessible after authentication via Itsyou.Online
+        """
+
+        @wraps(handler)
+        def _wrapper(*args, **kwargs):
+            if not session.get("_iyo_authenticated"):
+                organization = get_auth_org2(org_from_request=org_from_request)
+                config = current_app.config["iyo_config"]
+                scopes = []
+                scopes.append("user:memberof:{}".format(organization))
+                if config["scope"]:
+                    scopes.append(config['scope'])
+                scope = ','.join(scopes)
+
+                header = request.headers.get("Authorization")
+                if header:
+                    match = JWT_AUTH_HEADER.match(header)
+                    if match:
+                        jwt_string = match.group(1)
+                        jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                        jwt_scope = jwt_info["scope"]
+                        if set(scope.split(",")).issubset(set(jwt_scope)):
+                            username = jwt_info["username"]
+                            session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
+                            session["_iyo_authenticated"] = time.time()
+                            session['iyo_jwt'] = jwt_string
+                            return handler(*args, **kwargs)
+                    return "Could not authorize this request!", 403
+                state = str(uuid.uuid4())
+                session["_iyo_state"] = state
+                session['_iyo_organization'] = organization
+                session["_iyo_auth_complete_uri"] = request.full_path
+                params = {
+                    "response_type": "code",
+                    "client_id": config["organization"],
+                    "redirect_uri": config["callback_uri"],
+                    "scope": scope,
+                    "state" : state
+                }
+                base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
+                login_url = base_url + urlencode(params)
+                return redirect(login_url)
+            else:
+
+                return handler(*args, **kwargs)
+        return _wrapper
+    return decorator
+
