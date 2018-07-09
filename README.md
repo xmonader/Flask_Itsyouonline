@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
 ## Another example
 
-```
+```python
 from flask_itsyouonline import configure, requires_auth
 from flask import Flask
 
