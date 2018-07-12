@@ -22,6 +22,15 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 -----END PUBLIC KEY-----"""
 
 
+
+def force_invalidate_session():
+    if '_iyo_authenticated' in session:
+        del session['_iyo_authenticated']
+    if 'iyo_user_info' in session:
+        del session['iyo_user_info']
+    if 'iyo_jwt' in session:
+        del session['iyo_jwt']
+
 def _invalidate_session():
     authenticated_ = session.get('_iyo_authenticated')
     if not authenticated_ or authenticated_ + 300 < time.time():
@@ -54,12 +63,13 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     app.add_url_rule(callback_route, '_callback', _callback)
 
 
-def get_auth_org():
+def get_auth_org(org_from_request=False):
     config = current_app.config["iyo_config"]
-    if config['orgfromrequest']:
+    if org_from_request is True:
         return request.values[config['orgfromrequest']]
-    else:
-        return config['organization']
+
+    return config['organization']
+
 
 def authenticated(handler):
     """
@@ -170,16 +180,6 @@ def _get_info(username, access_token=None, jwt=None):
     return response.json()
 
 
-
-
-def get_auth_org2(org_from_request=False):
-    config = current_app.config["iyo_config"]
-    if org_from_request is True:
-        return request.values[config['orgfromrequest']]
-
-    return config['organization']
-
-
 def requires_auth(org_from_request=False):
     def decorator(handler):
         """
@@ -189,7 +189,7 @@ def requires_auth(org_from_request=False):
         @wraps(handler)
         def _wrapper(*args, **kwargs):
             if not session.get("_iyo_authenticated"):
-                organization = get_auth_org2(org_from_request=org_from_request)
+                organization = get_auth_org(org_from_request=org_from_request)
                 config = current_app.config["iyo_config"]
                 scopes = []
                 scopes.append("user:memberof:{}".format(organization))
