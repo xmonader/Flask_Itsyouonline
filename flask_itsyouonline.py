@@ -22,18 +22,7 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 -----END PUBLIC KEY-----"""
 
 
-def _invalidate_session():
-    authenticated_ = session.get('_iyo_authenticated')
-    if not authenticated_ or authenticated_ + 300 < time.time():
-        if '_iyo_authenticated' in session:
-            del session['_iyo_authenticated']
-        if 'iyo_user_info' in session:
-            del session['iyo_user_info']
-        if 'iyo_jwt' in session:
-            del session['iyo_jwt']
-
-
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -45,8 +34,20 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     @param callback_route: Route to bind the callback handler to.
     @param scope: Extra scope to request from Itsyou.Online
     @param get_jwt: Set to True to also create a jwt for the authenticated user
+    @param invalidate_session_timeout: Session timeout. Set to 0 for no timeout.
     """
-    app.before_request(_invalidate_session)
+    def invalidate_session():
+        authenticated_ = session.get('_iyo_authenticated')
+        if not authenticated_ or authenticated_ + invalidate_session_timeout < time.time():
+            if '_iyo_authenticated' in session:
+                del session['_iyo_authenticated']
+            if 'iyo_user_info' in session:
+                del session['iyo_user_info']
+            if 'iyo_jwt' in session:
+                del session['iyo_jwt']
+
+    if invalidate_session_timeout > 0:
+        app.before_request(invalidate_session)
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
                                     scope=scope, get_jwt=get_jwt, offline_access=offline_access,
@@ -60,6 +61,7 @@ def get_auth_org():
         return request.values[config['orgfromrequest']]
     else:
         return config['organization']
+
 
 def authenticated(handler):
     """
