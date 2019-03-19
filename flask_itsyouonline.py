@@ -13,7 +13,7 @@ from flask import current_app, redirect, request, session
 
 __version__ = '0.0.1'
 
-ITSYOUONLINEV1 = "https://itsyou.online/v1"
+ITSYOUONLINE = "https://itsyou.online"
 JWT_AUTH_HEADER = re.compile("^bearer (.*)$", re.IGNORECASE)
 ITSYOUONLINE_KEY = """-----BEGIN PUBLIC KEY-----
 MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
@@ -22,7 +22,7 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 -----END PUBLIC KEY-----"""
 
 
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -51,7 +51,7 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
                                     scope=scope, get_jwt=get_jwt, offline_access=offline_access,
-                                    orgfromrequest=orgfromrequest)
+                                    orgfromrequest=orgfromrequest, verify=verify)
     app.add_url_rule(callback_route, '_callback', _callback)
 
 
@@ -103,7 +103,7 @@ def authenticated(handler):
                 "scope": scope,
                 "state" : state
             }
-            base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
+            base_url = "{}/v1/oauth/authorize?".format(ITSYOUONLINE)
             login_url = base_url + urlencode(params)
             return redirect(login_url)
         else:
@@ -134,9 +134,9 @@ def _callback():
         "client_secret": config["client_secret"],
         "redirect_uri": config["callback_uri"],
     }
-    base_url = "{}/oauth/access_token?".format(ITSYOUONLINEV1)
+    base_url = "{}/v1/oauth/access_token?".format(ITSYOUONLINE)
     url = base_url + urlencode(params)
-    response = requests.post(url)
+    response = requests.post(url, verify=config['verify'])
     response.raise_for_status()
     response = response.json()
     scope_parts = response["scope"].split(",")
@@ -152,22 +152,25 @@ def _callback():
         scope = "user:memberof:{}".format(authorg)
         if config['offline_access']:
             scope += ",offline_access"
+        if config['scope']:
+            scope += ",{}".format(config['scope'])
         params = dict(scope=scope)
-        jwturl = "https://itsyou.online/v1/oauth/jwt?%s" % urlencode(params)
-        headers = {"Authorization": "token %s" % access_token}
-        response = requests.get(jwturl, headers=headers)
+        jwturl = "{}/v1/oauth/jwt?{}".format(ITSYOUONLINE, urlencode(params))
+        headers = {"Authorization": "token {}".format(access_token)}
+        response = requests.get(jwturl, headers=headers, verify=config['verify'])
         response.raise_for_status()
         session['iyo_jwt'] = response.text
     return redirect(on_complete_uri)
 
 
 def _get_info(username, access_token=None, jwt=None):
+    config = current_app.config["iyo_config"]
     if access_token:
-        headers = {"Authorization": "token %s" % access_token}
+        headers = {"Authorization": "token {}".format(access_token)}
     else:
-        headers = {"Authorization": "Bearer %s" % jwt}
-    userinfourl = "https://itsyou.online/api/users/%s/info" % username
-    response = requests.get(userinfourl, headers=headers)
+        headers = {"Authorization": "Bearer {}".format(jwt)}
+    userinfourl = "{}/api/users/{}/info".format(ITSYOUONLINE, username)
+    response = requests.get(userinfourl, headers=headers, verify=config['verify'])
     response.raise_for_status()
     return response.json()
 
@@ -224,7 +227,7 @@ def requires_auth(org_from_request=False):
                     "scope": scope,
                     "state" : state
                 }
-                base_url = "{}/oauth/authorize?".format(ITSYOUONLINEV1)
+                base_url = "{}/v1/oauth/authorize?".format(ITSYOUONLINE)
                 login_url = base_url + urlencode(params)
                 return redirect(login_url)
             else:
