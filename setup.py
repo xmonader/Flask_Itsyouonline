@@ -5,7 +5,7 @@ except ImportError:
     from distutils.core import setup
 
 setup(name='flask_itsyouonline',
-      version='1.3.0',
+      version='1.3.1',
       author="Ahmed T. Youssef",
       author_email="xmonader@gmail.com",
       description='Itsyou.online middleware for Flask.',
@@ -13,6 +13,7 @@ setup(name='flask_itsyouonline',
       py_modules=['flask_itsyouonline'],
       url="http://github.com/xmonader/flask_itsyouonline",
       license='BSD 3-Clause License',
+      install_requires=['requests', 'pyjwt'],
       classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Web Environment',
