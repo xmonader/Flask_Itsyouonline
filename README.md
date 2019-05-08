@@ -18,10 +18,12 @@ Flask-Itsyouonline is a plugin for Flask microframework implements the OAuth flo
 
 ```python
 import flask
-from flask import Flask, 
+from flask import Flask
 from flask_itsyouonline import configure, authenticated
 
 app = flask.Flask(__name__)
+# flask_itsyouonline uses sessions secret needs to be set
+app.secret_key = b'_5#y2l"F4q8z\n\xec]/'
 
 configure(app, 'Itsyou.Online organization', 'Itsyou.Online client secret', 
           "http://127.0.0.1/callback", '/callback', 'user:publickey:ssh')
@@ -29,7 +31,7 @@ configure(app, 'Itsyou.Online organization', 'Itsyou.Online client secret',
 @app.route("/", methods=["GET"])
 @authenticated
 def home():
-    return "Hello %s" % app.config['iyo_user_info']['username']
+    return "Hello %s" % flask.session['iyo_user_info']['username']
 
 if __name__ == "__main__":
 
@@ -44,6 +46,7 @@ from flask_itsyouonline import configure, requires_auth
 from flask import Flask
 
 app = Flask(__name__)
+# flask_itsyouonline uses sessions secret needs to be set
 app.secret_key = b'_5#y2L"F4Q8z\n\xec]/'
 
 configure(app, 'flaskitsyou', 'ibSuQCgP-_CV8XzlPi0oZucEGCTTxTmffv8YMjQzLgxOFqaoGh00', 
