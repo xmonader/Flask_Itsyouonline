@@ -22,7 +22,7 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 -----END PUBLIC KEY-----"""
 
 
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True, members_only=True):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -35,6 +35,7 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     @param scope: Extra scope to request from Itsyou.Online
     @param get_jwt: Set to True to also create a jwt for the authenticated user
     @param invalidate_session_timeout: Session timeout. Set to 0 for no timeout.
+    @param members_only: Flag to authenticate only the members of the organization.
     """
     def invalidate_session():
         authenticated_ = session.get('_iyo_authenticated')
@@ -51,7 +52,7 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
                                     scope=scope, get_jwt=get_jwt, offline_access=offline_access,
-                                    orgfromrequest=orgfromrequest, verify=verify)
+                                    orgfromrequest=orgfromrequest, verify=verify, members_only=members_only)
     app.add_url_rule(callback_route, '_callback', _callback)
 
 
@@ -62,18 +63,16 @@ def get_auth_org():
     else:
         return config['organization']
 
-def get_scopes():
+def get_scopes(all_scopes=False):
     """Get configured scopes
     
     Returns:
         [str] -- List of scopes
     """
-
     config = current_app.config["iyo_config"]
-    scopes = []
-    scopes.append("user:memberof:{}".format(get_auth_org()))
-    if config["scope"]:
-        scopes.append(config['scope'])
+    scopes = config.get("scope").split(",")
+    if config["members_only"] or all_scopes:
+        scopes.append("user:memberof:{}".format(get_auth_org()))
     return scopes
 
 def get_login_url(scopes, return_path=None):
@@ -115,6 +114,7 @@ def authenticated(handler):
         if not session.get("_iyo_authenticated"):
             scopes = get_scopes()
             header = request.headers.get("Authorization")
+            config = current_app.config["iyo_config"]
             if header:
                 match = JWT_AUTH_HEADER.match(header)
                 if match:
@@ -125,10 +125,12 @@ def authenticated(handler):
                         username = jwt_info["username"]
                         session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
                         session["_iyo_authenticated"] = time.time()
+                        session["_iyo_organization"] = config["organization"]
+                        session['iyo_scopes'] = jwt_scope
                         session['iyo_jwt'] = jwt_string
                         return handler(*args, **kwargs)
                 return "Could not authorize this request!", 403
-            login_url = get_login_url(scopes)
+            login_url = get_login_url(get_scopes(all_scopes=True))
             return redirect(login_url)
         else:
             return handler(*args, **kwargs)
@@ -165,7 +167,7 @@ def _callback():
     response.raise_for_status()
     response = response.json()
     scopes = response["scope"].split(",")
-    if not "user:memberof:{}".format(authorg) in scopes:
+    if config["members_only"] and not "user:memberof:{}".format(authorg) in scopes:
         return "User is not authorized.", 403
     access_token = response["access_token"]
     username = response["info"]["username"]
@@ -230,7 +232,7 @@ def requires_auth(org_from_request=False):
                         jwt_string = match.group(1)
                         jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
                         jwt_scope = jwt_info["scope"]
-                        if set(scope.split(",")).issubset(set(jwt_scope)):
+                        if set(scopes).issubset(set(jwt_scope)):
                             username = jwt_info["username"]
                             session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
                             session["_iyo_authenticated"] = time.time()
@@ -256,4 +258,3 @@ def requires_auth(org_from_request=False):
                 return handler(*args, **kwargs)
         return _wrapper
     return decorator
-
