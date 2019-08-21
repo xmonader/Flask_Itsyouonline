@@ -22,7 +22,9 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 -----END PUBLIC KEY-----"""
 
 
-def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False, offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True, members_only=True):
+def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False,
+              offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True,
+              members_only=True):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -63,9 +65,10 @@ def get_auth_org():
     else:
         return config['organization']
 
+
 def get_scopes(all_scopes=False):
     """Get configured scopes
-    
+
     Returns:
         [str] -- List of scopes
     """
@@ -75,15 +78,16 @@ def get_scopes(all_scopes=False):
         scopes.append("user:memberof:{}".format(get_auth_org()))
     return scopes
 
+
 def get_login_url(scopes, return_path=None):
     """Produce a login url
-    
+
     Arguments:
         scopes {[str]} -- List of scopes
-    
+
     Keyword Arguments:
         return_path {str} -- Redirect path after successful login (default: {None})
-    
+
     Returns:
         str -- Login url
     """
@@ -98,7 +102,7 @@ def get_login_url(scopes, return_path=None):
         "client_id": organization,
         "redirect_uri": config["callback_uri"],
         "scope": ','.join(scopes),
-        "state" : state
+        "state": state
     }
     base_url = "{}/v1/oauth/authorize?".format(ITSYOUONLINE)
     login_url = base_url + urlencode(params)
@@ -117,21 +121,23 @@ def authenticated(handler):
             config = current_app.config["iyo_config"]
             if header:
                 match = JWT_AUTH_HEADER.match(header)
-                if match:
-                    jwt_string = match.group(1)
-                    jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
-                    jwt_scope = jwt_info["scope"]
-                    if set(scopes).issubset(set(jwt_scope)):
-                        username = jwt_info["username"]
-                        session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
-                        session["_iyo_authenticated"] = time.time()
-                        session["_iyo_organization"] = config["organization"]
-                        session['iyo_scopes'] = jwt_scope
-                        session['iyo_jwt'] = jwt_string
-                        return handler(*args, **kwargs)
-                return "Could not authorize this request!", 403
-            login_url = get_login_url(get_scopes(all_scopes=True))
-            return redirect(login_url)
+                if match is None:
+                    return "Could not authorize this request!", 403
+                jwt_string = match.group(1)
+                jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                jwt_scope = jwt_info["scope"]
+                if config["members_only"] and not set(scopes).issubset(set(jwt_scope)):
+                    return "Could not authorize this request!", 403
+                username = jwt_info["username"]
+                session["iyo_user_info"] = _get_info(username, jwt=jwt_string)
+                session["_iyo_authenticated"] = time.time()
+                session["_iyo_organization"] = config["organization"]
+                session['iyo_scopes'] = jwt_scope
+                session['iyo_jwt'] = jwt_string
+                return handler(*args, **kwargs)
+            else:
+                login_url = get_login_url(get_scopes(all_scopes=True))
+                return redirect(login_url)
         else:
             return handler(*args, **kwargs)
 
@@ -154,10 +160,10 @@ def _callback():
     organization = config["organization"]
     authorg = session['_iyo_organization']
     params = {
-        "code" : code,
+        "code": code,
         "state": state,
         "grant_type": "authorization_code",
-        "client_id" : organization,
+        "client_id": organization,
         "client_secret": config["client_secret"],
         "redirect_uri": config["callback_uri"],
     }
@@ -248,7 +254,7 @@ def requires_auth(org_from_request=False):
                     "client_id": config["organization"],
                     "redirect_uri": config["callback_uri"],
                     "scope": scope,
-                    "state" : state
+                    "state": state
                 }
                 base_url = "{}/v1/oauth/authorize?".format(ITSYOUONLINE)
                 login_url = base_url + urlencode(params)
