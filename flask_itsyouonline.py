@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 import jwt
 import requests
-from flask import current_app, redirect, request, session
+from flask import current_app, redirect, request, session, abort
 
 __version__ = '0.0.1'
 
@@ -24,7 +24,7 @@ MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAES5X8XrfKdx9gYayFITc89wad4usrk0n2
 
 def configure(app, organization, client_secret, callback_uri, callback_route, scope=None, get_jwt=False,
               offline_access=False, orgfromrequest=False, invalidate_session_timeout=300, verify=True,
-              members_only=True):
+              members_only=True, redirect_to_login=True):
     """
     @param app: Flask app object
     @param organization: Fully qualified Itsyou.Online organization.
@@ -38,6 +38,7 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     @param get_jwt: Set to True to also create a jwt for the authenticated user
     @param invalidate_session_timeout: Session timeout. Set to 0 for no timeout.
     @param members_only: Flag to authenticate only the members of the organization.
+    @param redirect_to_login: Flag to return 401 instead of redirecting to itsyou.online.
     """
     def invalidate_session():
         authenticated_ = session.get('_iyo_authenticated')
@@ -54,7 +55,8 @@ def configure(app, organization, client_secret, callback_uri, callback_route, sc
     app.config['iyo_config'] = dict(organization=organization, client_secret=client_secret,
                                     callback_uri=callback_uri, callback_route=callback_route,
                                     scope=scope, get_jwt=get_jwt, offline_access=offline_access,
-                                    orgfromrequest=orgfromrequest, verify=verify, members_only=members_only)
+                                    orgfromrequest=orgfromrequest, verify=verify, members_only=members_only,
+                                    redirect_to_login=redirect_to_login)
     app.add_url_rule(callback_route, '_callback', _callback)
 
 
@@ -137,7 +139,10 @@ def authenticated(handler):
                 return handler(*args, **kwargs)
             else:
                 login_url = get_login_url(get_scopes(all_scopes=True))
-                return redirect(login_url)
+                if config.get('redirect_to_login'):
+                    return redirect(login_url)
+                else:
+                    return abort(401)
         else:
             return handler(*args, **kwargs)
 
