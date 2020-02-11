@@ -2,6 +2,7 @@
 # Itsyou.Online authentication helpers for Flask
 #
 import re
+import logging
 import time
 import uuid
 from functools import wraps
@@ -126,7 +127,11 @@ def authenticated(handler):
                 if match is None:
                     return "Could not authorize this request!", 403
                 jwt_string = match.group(1)
-                jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                try:
+                    jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                except jwt.PyJWTError:
+                    logging.exception("Failed decoding jwt")
+                    return abort(401)
                 jwt_scope = jwt_info["scope"]
                 if config["members_only"] and not set(scopes).issubset(set(jwt_scope)):
                     return "Could not authorize this request!", 403
@@ -241,7 +246,11 @@ def requires_auth(org_from_request=False):
                     match = JWT_AUTH_HEADER.match(header)
                     if match:
                         jwt_string = match.group(1)
-                        jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                        try:
+                            jwt_info = jwt.decode(jwt_string, ITSYOUONLINE_KEY)
+                        except jwt.PyJWTError:
+                            logging.exception("Failed decoding jwt")
+                            return abort(401)
                         jwt_scope = jwt_info["scope"]
                         if set(scopes).issubset(set(jwt_scope)):
                             username = jwt_info["username"]

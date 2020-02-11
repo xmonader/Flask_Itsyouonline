@@ -11,7 +11,7 @@ Flask-Itsyouonline is a plugin for Flask microframework implements the OAuth flo
 - CLIENT_SECRET: client secret.
 - REDIRECT_URI: your callback endpoint
 - AUTH_ENDPOINT: from where to start the oauth flow
-- ON_COMPLETE_ENDPOINT: make a post request to the end point with user informatin.
+- ON_COMPLETE_ENDPOINT: make a post request to the end point with user information.
 
 
 ## Example application
